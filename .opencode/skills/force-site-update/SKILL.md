@@ -119,6 +119,26 @@ shows old content. This is the #1 cause of "I fixed it but it's not live."
 
 **Fix**: The TypeScript cache cleanup + post-deploy verification catches this.
 
+### Firebase root-path cache (default `max-age=3600`)
+
+A `Cache-Control: no-cache` header rule scoped to `*.html` does **not** match the
+root request `/`. Firebase serves `/` as `index.html`, but it matches header
+`source` against the URL path — so `/` falls back to Firebase's default
+`max-age=3600` and the homepage is cached for an hour.
+
+**Symptom**: You deploy, the CI is green, but the user still sees the old
+homepage even though `/index.html` is fresh.
+
+**Fix**: add an explicit `no-cache` header rule for `/` alongside `*.html` in
+`firebase.json`:
+
+```json
+{ "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+```
+
+Verify with: `curl -sI https://<live-url>/ | grep -i cache-control` → must print
+`no-cache`, not `max-age=3600`.
+
 ### Service worker cache
 
 Even after Firebase deploys new files, the service worker in users' browsers

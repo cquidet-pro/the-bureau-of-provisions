@@ -1,0 +1,57 @@
+name: Deploy to Firebase Hosting
+
+on:
+  push:
+    branches: [main]
+    # Skill/docs-only merges don't change the site — don't build or deploy for
+    # them (and there is no run for watch-deploy to watch).
+    paths-ignore:
+      - ".opencode/**"
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Allow one concurrent deployment; cancel in-progress runs for the same ref.
+concurrency:
+  group: firebase-hosting
+  cancel-in-progress: true
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Deploy via the CLI (same service-account auth the FirebaseExtended action
+      # uses internally). The GitHub runner regularly hits "premature close"
+      # errors talking to the Firebase APIs, so firebase-tools retries the final
+      # release — by which point the version is already live, and the retry fails
+      # with "is the current active version". The content ships fine, so we treat
+      # ONLY that specific benign error as success; anything else still fails CI.
+      - name: Deploy to Firebase Hosting
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          rm -rf .firebase
+          printf '%s' "$FIREBASE_SA" > "$GOOGLE_APPLICATION_CREDENTIALS"
+          set +e
+          out=$(npx -y firebase-tools@15.22.3 deploy --only hosting \
+                --project bureauofprovisions --non-interactive 2>&1)
+          code=$?
+          rm -f "$GOOGLE_APPLICATION_CREDENTIALS"
+          printf '%s\n' "$out"
+          if [ "$code" -eq 0 ]; then exit 0; fi
+          if printf '%s' "$out" | grep -q "is the current active version"; then
+            echo "::warning::Hosting release reported the version is already active (benign retry after a flaky connection); content is live."
+            exit 0
+          fi
+          exit "$code"
